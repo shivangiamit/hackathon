@@ -1,218 +1,262 @@
 const express = require('express');
 const cors = require('cors');
-const http = require('http');
-const WebSocket = require('ws');
 const dotenv = require('dotenv');
-const connectDB = require('./config/db');
-const initializeSchedulers = require('./utils/aggregationScheduler');
+const mongoose = require('mongoose');
+const WebSocket = require('ws');
+const http = require('http');
+const mqtt = require('mqtt');
 
 // Load environment variables
 dotenv.config();
 
-// Initialize Express app
+// Initialize Express
 const app = express();
 const server = http.createServer(app);
-const wss = new WebSocket.Server({ server });
 
 // Middleware
 app.use(cors());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb' }));
 
-// Increase file size limit for audio uploads (Whisper API: 25MB max)
-app.use(express.json({ limit: '25mb' }));
-app.use(express.urlencoded({ limit: '25mb', extended: true }));
-
-// Connect to MongoDB
-console.log('🔗 Connecting to MongoDB...');
+// Database
+const connectDB = require('./config/db');
 connectDB();
 
-// Initialize data aggregation schedulers
-console.log('📅 Initializing data aggregation schedulers...');
+// Initialize scheduler
+const initializeSchedulers = require('./utils/aggregationScheduler');
 initializeSchedulers();
 
-// ==================== ROUTES ====================
+// Models
+const { SensorHistory } = require('./models/SensorHistory');
 
-// Health check
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date() });
+// Routes
+const sensorRoutes = require('./routes/sensor');
+const chatRoutes = require('./routes/chat');
+const memoryRoutes = require('./routes/memory');
+const voiceRoutes = require('./routes/voice');
+
+// API Routes
+app.use('/api/sensor', sensorRoutes);
+app.use('/api/chat', chatRoutes);
+app.use('/api/memory', memoryRoutes);
+app.use('/api/voice', voiceRoutes);
+
+// ==================== MQTT SETUP ====================
+
+const mqttBroker = process.env.MQTT_BROKER || 'mqtt://broker.hivemq.com:1883';
+let mqttClient;
+
+const initMQTT = () => {
+  mqttClient = mqtt.connect(mqttBroker);
+
+  mqttClient.on('connect', () => {
+    console.log('🔗 MQTT Connected to broker');
+    
+    // Subscribe to sensor data topic
+    mqttClient.subscribe('agrismart/sensors', (err) => {
+      if (!err) {
+        console.log('📡 Subscribed to: agrismart/sensors');
+      }
+    });
+    
+    mqttClient.subscribe('agrismart/motor/status', (err) => {
+      if (!err) {
+        console.log('📡 Subscribed to: agrismart/motor/status');
+      }
+    });
+    
+    mqttClient.subscribe('agrismart/status', (err) => {
+      if (!err) {
+        console.log('📡 Subscribed to: agrismart/status');
+      }
+    });
+  });
+
+  mqttClient.on('message', async (topic, message) => {
+    try {
+      const data = JSON.parse(message.toString());
+      
+      console.log(`\n📨 MQTT Message received on topic: ${topic}`);
+      console.log('Payload:', JSON.stringify(data, null, 2));
+
+      if (topic === 'agrismart/sensors') {
+        // Save sensor data to database
+        const sensorEntry = await SensorHistory.create({
+          userId: 'farmer_001',
+          moisture: data.moisture || 0,
+          ph: data.ph || 6.5,
+          nitrogen: data.nitrogen || 150,
+          phosphorus: data.phosphorus || 50,
+          potassium: data.potassium || 180,
+          temperature: data.temperature || 0,
+          humidity: data.humidity || 0,
+          cropType: data.crop || 'Tomato',
+          motorStatus: data.motorStatus || false,
+          manualMode: data.manualMode || false
+        });
+
+        console.log('✅ Sensor data saved to database');
+
+        // Broadcast to WebSocket clients
+        if (app.locals.broadcastSensorData) {
+          app.locals.broadcastSensorData({
+            userId: 'farmer_001',
+            moisture: data.moisture,
+            temperature: data.temperature,
+            humidity: data.humidity,
+            ph: data.ph,
+            nitrogen: data.nitrogen,
+            phosphorus: data.phosphorus,
+            potassium: data.potassium,
+            crop: data.crop,
+            motorStatus: data.motorStatus,
+            manualMode: data.manualMode,
+            timestamp: new Date()
+          });
+          console.log('📡 Broadcast to WebSocket clients');
+        }
+      }
+
+    } catch (error) {
+      console.error('❌ Error processing MQTT message:', error.message);
+    }
+  });
+
+  mqttClient.on('error', (error) => {
+    console.error('❌ MQTT Error:', error);
+  });
+
+  mqttClient.on('disconnect', () => {
+    console.log('⚠️ MQTT Disconnected');
+  });
+};
+
+// Initialize MQTT connection
+initMQTT();
+
+// ==================== ADDITIONAL SENSOR ENDPOINTS ====================
+
+app.get('/api/sensor/latest', async (req, res) => {
+  try {
+    const userId = req.query.userId || 'farmer_001';
+    const latest = await SensorHistory.getLatestReading(userId);
+    res.json({ success: true, data: latest || {} });
+  } catch (error) {
+    console.error('Error fetching latest sensor:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
 });
 
-// Sensor routes (existing)
-app.use('/api/sensors', require('./routes/sensor'));
+app.get('/api/sensor/recent', async (req, res) => {
+  try {
+    const userId = req.query.userId || 'farmer_001';
+    const hours = parseInt(req.query.hours) || 24;
+    const data = await SensorHistory.getRecentData(userId, hours);
+    res.json({ success: true, data: data || [] });
+  } catch (error) {
+    console.error('Error fetching recent sensor data:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
 
-// Memory/Context routes
-app.use('/api/memory', require('./routes/memory'));
+// ==================== WEBSOCKET SETUP ====================
 
-// 🎤 VOICE ROUTES (NEW - Phase 5) ← ADD THIS
-app.use('/api/voice', require('./routes/voice'));
-
-// Chat/AI routes (Phase 4)
-app.use('/api/chat', require('./routes/chat'));
-
-// Control routes (existing)
-app.use('/api/control', require('./routes/control'));
-
-// ==================== WEBSOCKET ====================
-
-let connectedClients = [];
+const wss = new WebSocket.Server({ server });
 
 wss.on('connection', (ws) => {
-  console.log('✅ WebSocket connected');
-  connectedClients.push(ws);
+  console.log('🔗 WebSocket client connected');
 
-  // Send connection confirmation
-  ws.send(JSON.stringify({
-    type: 'connection',
-    status: 'connected',
-    timestamp: new Date()
-  }));
-
-  ws.on('message', (message) => {
+  ws.on('message', (data) => {
     try {
-      const data = JSON.parse(message);
-      console.log('📨 WebSocket message:', data.type);
+      const message = JSON.parse(data);
+      console.log('📨 WebSocket message:', message.type);
 
       // Handle different message types
-      switch (data.type) {
-        case 'ping':
-          ws.send(JSON.stringify({ type: 'pong' }));
-          break;
-
-        case 'query':
-          // Forward AI query request
-          console.log('🤖 AI query via WebSocket:', data.query);
-          // Handler can be implemented if needed
-          break;
-
-        default:
-          console.log('Unknown message type:', data.type);
+      if (message.type === 'ping') {
+        ws.send(JSON.stringify({ type: 'pong' }));
       }
     } catch (error) {
-      console.error('❌ WebSocket message error:', error);
+      console.error('WebSocket message error:', error);
     }
   });
 
   ws.on('close', () => {
-    console.log('❌ WebSocket disconnected');
-    connectedClients = connectedClients.filter(client => client !== ws);
+    console.log('❌ WebSocket client disconnected');
   });
 
   ws.on('error', (error) => {
-    console.error('❌ WebSocket error:', error);
+    console.error('WebSocket error:', error);
   });
 });
 
-// Function to broadcast sensor data to all connected clients
-function broadcastSensorData(data) {
-  connectedClients.forEach(client => {
+// Broadcast sensor data to all connected clients
+app.locals.broadcastSensorData = (sensorData) => {
+  wss.clients.forEach((client) => {
     if (client.readyState === WebSocket.OPEN) {
       client.send(JSON.stringify({
         type: 'sensor',
-        data
+        data: sensorData
       }));
     }
   });
-}
+};
 
-// Function to broadcast alerts
-function broadcastAlert(message) {
-  connectedClients.forEach(client => {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(JSON.stringify({
-        type: 'alert',
-        data: {
-          message,
-          timestamp: new Date()
-        }
-      }));
-    }
+// ==================== HEALTH CHECK ====================
+
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    timestamp: new Date(),
+    uptime: process.uptime()
   });
-}
+});
 
-function broadcastVoiceNotification(data) {
-  connectedClients.forEach(client => {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(JSON.stringify({
-        type: 'voice',
-        data
-      }));
-    }
+// ==================== ERROR HANDLING ====================
+
+app.use((err, req, res, next) => {
+  console.error('❌ Server error:', err);
+  res.status(500).json({
+    success: false,
+    error: err.message,
+    message: 'Internal server error'
   });
-}
-
-app.locals.broadcastSensorData = broadcastSensorData;
-app.locals.broadcastAlert = broadcastAlert;
-app.locals.broadcastVoiceNotification = broadcastVoiceNotification;
+});
 
 app.use((req, res) => {
   res.status(404).json({
     success: false,
-    error: 'Endpoint not found',
+    error: 'Route not found',
     path: req.path
   });
 });
 
-// Global error handler
-app.use((err, req, res, next) => {
-  console.error('❌ Error:', err);
-  
-  // Handle multer file upload errors
-  if (err.name === 'MulterError') {
-    return res.status(400).json({
-      success: false,
-      error: `File upload error: ${err.message}`
-    });
-  }
-
-  res.status(500).json({
-    success: false,
-    error: 'Internal server error',
-    message: process.env.NODE_ENV === 'development' ? err.message : 'Something went wrong'
-  });
-});
+// ==================== START SERVER ====================
 
 const PORT = process.env.PORT || 5000;
-const HOST = process.env.HOST || 'localhost';
 
-server.listen(PORT, HOST, () => {
-  console.log('\n' + '='.repeat(70));
-  console.log('🌱 AgriSmart AI Backend Server');
-  console.log('='.repeat(70));
-  console.log(`✅ Server running on http://${HOST}:${PORT}`);
-  console.log(`📊 WebSocket available at ws://${HOST}:${PORT}`);
-  console.log('\n📡 Available Endpoints:');
-  console.log(`   🎤 Voice:  POST /api/voice/chat (Multilingual voice assistant)`);
-  console.log(`   🤖 Chat:   POST /api/chat (Text queries)`);
-  console.log(`   💾 Memory: GET  /api/memory/* (Context & history)`);
-  console.log(`   📡 Sensors: GET /api/sensors/* (Current readings)`);
-  console.log(`   🎮 Control: POST /api/control (Device control)`);
-  console.log('\n🌍 Languages Supported: 40+ (Hindi, Tamil, Telugu, English, etc.)`');
-  console.log(`🔊 Voices: 6 options (Nova, Shimmer, Echo, Alloy, Fable, Onyx)\``);
-  console.log('='.repeat(70) + '\n');
+server.listen(PORT, () => {
+  console.log('\n' + '='.repeat(60));
+  console.log('🚀 AgriSmart Backend Server');
+  console.log('='.repeat(60));
+  console.log(`📡 HTTP Server: http://localhost:${PORT}`);
+  console.log(`🔗 WebSocket: ws://localhost:${PORT}`);
+  console.log(`💾 Database: Connected`);
+  console.log(`🔌 MQTT: Connected`);
+  console.log('='.repeat(60) + '\n');
 });
 
 // Graceful shutdown
-process.on('SIGINT', () => {
-  console.log('\n🛑 Shutting down gracefully...');
-  
-  // Close WebSocket connections
-  connectedClients.forEach(client => {
+process.on('SIGINT', async () => {
+  console.log('\n⏹️  Shutting down...');
+  wss.clients.forEach((client) => {
     client.close();
   });
-  wss.close();
-
-  // Close HTTP server
+  if (mqttClient) {
+    mqttClient.end();
+  }
+  await mongoose.connection.close();
   server.close(() => {
     console.log('✅ Server closed');
     process.exit(0);
   });
-
-  // Force exit after 10 seconds
-  setTimeout(() => {
-    console.error('❌ Forced shutdown');
-    process.exit(1);
-  }, 10000);
 });
-
-module.exports = { app, server, wss, broadcastSensorData, broadcastAlert, broadcastVoiceNotification };

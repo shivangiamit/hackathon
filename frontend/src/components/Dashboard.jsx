@@ -65,6 +65,31 @@ export const Dashboard = ({
     return { text: "GOOD", color: "green" };
   };
 
+  // Prepare chart data - ensure it's always an array
+  const chartData =
+    Array.isArray(history) && history.length > 0
+      ? history.map((item, index) => ({
+          name: `Reading ${index + 1}`,
+          timestamp: item.timestamp || `T${index}`,
+          moisture: parseFloat(item.moisture) || 0,
+          temperature: parseFloat(item.temperature) || 0,
+          humidity: parseFloat(item.humidity) || 0,
+          ph: parseFloat(item.ph) || 0,
+        }))
+      : [
+          // Dummy data for when no history exists
+          {
+            name: "Reading 1",
+            timestamp: "T1",
+            moisture: sensorData.moisture,
+            temperature: sensorData.temperature,
+            humidity: sensorData.humidity,
+            ph: sensorData.ph,
+          },
+        ];
+
+  console.log("📊 Chart data prepared:", chartData);
+
   return (
     <div className="dashboard">
       <div className="alert-box">
@@ -180,34 +205,66 @@ export const Dashboard = ({
 
       <div className="chart-container">
         <h3>Sensor Trends (Last 20 readings)</h3>
-        <ResponsiveContainer width="100%" height={300}>
-          <LineChart data={history}>
-            <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey="timestamp" hide />
-            <YAxis />
-            <Tooltip />
-            <Legend />
-            <Line
-              type="monotone"
-              dataKey="moisture"
-              stroke="#3b82f6"
-              name="Moisture %"
-            />
-            <Line
-              type="monotone"
-              dataKey="temperature"
-              stroke="#f97316"
-              name="Temp °C"
-            />
-            <Line
-              type="monotone"
-              dataKey="humidity"
-              stroke="#a855f7"
-              name="Humidity %"
-            />
-            <Line type="monotone" dataKey="ph" stroke="#10b981" name="PH" />
-          </LineChart>
-        </ResponsiveContainer>
+        {chartData && chartData.length > 0 ? (
+          <ResponsiveContainer width="100%" height={300}>
+            <LineChart
+              data={chartData}
+              margin={{ top: 5, right: 30, left: 0, bottom: 5 }}
+            >
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis
+                dataKey="timestamp"
+                tick={{ fontSize: 12 }}
+                interval={Math.floor(chartData.length / 6)}
+              />
+              <YAxis />
+              <Tooltip
+                contentStyle={{
+                  backgroundColor: "#f5f5f5",
+                  border: "1px solid #ccc",
+                }}
+                formatter={(value) => parseFloat(value).toFixed(2)}
+              />
+              <Legend />
+              <Line
+                type="monotone"
+                dataKey="moisture"
+                stroke="#3b82f6"
+                name="Moisture %"
+                dot={false}
+                isAnimationActive={false}
+              />
+              <Line
+                type="monotone"
+                dataKey="temperature"
+                stroke="#f97316"
+                name="Temp °C"
+                dot={false}
+                isAnimationActive={false}
+              />
+              <Line
+                type="monotone"
+                dataKey="humidity"
+                stroke="#a855f7"
+                name="Humidity %"
+                dot={false}
+                isAnimationActive={false}
+              />
+              <Line
+                type="monotone"
+                dataKey="ph"
+                stroke="#10b981"
+                name="PH"
+                dot={false}
+                isAnimationActive={false}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        ) : (
+          <div style={{ textAlign: "center", padding: "40px", color: "#999" }}>
+            <p>Waiting for sensor data...</p>
+          </div>
+        )}
       </div>
     </div>
   );

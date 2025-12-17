@@ -42,14 +42,29 @@ function App() {
 
   // WebSocket callbacks
   const handleSensorUpdate = useCallback((data) => {
-    setSensorData((prev) => ({ ...prev, ...data }));
+    console.log("🔄 Updating sensor data:", data);
+    setSensorData((prev) => ({
+      ...prev,
+      temperature: data.temperature ?? prev.temperature,
+      humidity: data.humidity ?? prev.humidity,
+      moisture: data.moisture ?? prev.moisture,
+      ph: data.ph ?? prev.ph,
+      nitrogen: data.nitrogen ?? prev.nitrogen,
+      phosphorus: data.phosphorus ?? prev.phosphorus,
+      potassium: data.potassium ?? prev.potassium,
+      motorStatus: data.motorStatus ?? prev.motorStatus,
+      crop: data.crop ?? prev.crop,
+      manualMode: data.manualMode ?? prev.manualMode,
+    }));
   }, []);
 
   const handleMotorUpdate = useCallback((status) => {
+    console.log("⚡ Motor status:", status);
     setSensorData((prev) => ({ ...prev, motorStatus: status }));
   }, []);
 
   const handleAlert = useCallback((message) => {
+    console.log("⚠️ Alert:", message);
     alert(message);
   }, []);
 
@@ -63,10 +78,38 @@ function App() {
   useEffect(() => {
     const fetchHistory = async () => {
       try {
-        const data = await api.getHistory(20);
-        setHistory(data);
+        console.log("📈 Fetching sensor history...");
+        const res = await fetch(`${API_URL}/sensor/recent?hours=24`);
+        if (!res.ok) throw new Error("Failed to fetch history");
+
+        const result = await res.json();
+        console.log("📊 API Response:", result);
+
+        // Format data for chart
+        if (result.success && result.data && Array.isArray(result.data)) {
+          const formattedData = result.data.map((item, index) => ({
+            timestamp: new Date(item.timestamp).toLocaleTimeString("en-US", {
+              hour: "2-digit",
+              minute: "2-digit",
+            }),
+            moisture: item.moisture,
+            temperature: item.temperature,
+            humidity: item.humidity,
+            ph: item.ph,
+            nitrogen: item.nitrogen,
+            phosphorus: item.phosphorus,
+            potassium: item.potassium,
+          }));
+
+          console.log(`✅ Fetched ${formattedData.length} historical readings`);
+          setHistory(formattedData);
+        } else {
+          console.warn("⚠️ No data in response");
+          setHistory([]);
+        }
       } catch (error) {
         console.error("Error fetching history:", error);
+        setHistory([]);
       }
     };
 
@@ -197,7 +240,7 @@ function App() {
         {activeTab === "dashboard" && (
           <Dashboard
             sensorData={sensorData}
-            history={history}
+            history={Array.isArray(history) ? history : []}
             selectedCrop={selectedCrop}
             setSelectedCrop={setSelectedCrop}
             onChangeCrop={handleChangeCrop}
@@ -223,6 +266,7 @@ function App() {
             userInput={userInput}
             setUserInput={setUserInput}
             isAiTyping={isAiTyping}
+            setIsAiTyping={setIsAiTyping}
             onSendMessage={handleSendMessage}
           />
         )}

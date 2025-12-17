@@ -80,6 +80,8 @@ const SensorHistorySchema = new mongoose.Schema({
 
 // Indexes
 SensorHistorySchema.index({ userId: 1, timestamp: -1 });
+SensorHistorySchema.index({ userId: 1, cropType: 1 });
+SensorHistorySchema.index({ timestamp: -1 });
 
 // TTL Index - AUTO DELETE after 7 days
 SensorHistorySchema.index({ timestamp: 1 }, { expireAfterSeconds: 604800 }); // 7 days
