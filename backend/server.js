@@ -11,6 +11,9 @@ require('dotenv').config();
 const connectDB = require('./config/db');
 const initializeSchedulers = require('./utils/aggregationScheduler');
 
+// Routes
+const memoryRoutes = require('./routes/memory');
+
 // Models
 const Conversation = require('./models/Conversation');
 const { SensorHistory, HourlyData, DailySummary } = require('./models/SensorHistory');
@@ -338,6 +341,9 @@ const handleImageAnalysis = async (base64) => {
 // ================= API ROUTES =================
 
 app.use('/api/', limits.api);
+
+// Memory routes
+app.use('/api/memory', memoryRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
