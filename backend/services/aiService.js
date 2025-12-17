@@ -33,7 +33,7 @@ class AIService {
   constructor() {
     // Initialize LLMs using LangChain
     this.gemini = new ChatGoogleGenerativeAI({
-      modelName: 'gemini-1.5-pro',
+      model: 'gemini-2.5-flash',
       apiKey: process.env.GOOGLE_API_KEY,
       maxOutputTokens: 2048
     });

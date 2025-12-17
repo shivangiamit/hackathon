@@ -19,6 +19,10 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Increase file size limit for audio uploads (Whisper API: 25MB max)
+app.use(express.json({ limit: '25mb' }));
+app.use(express.urlencoded({ limit: '25mb', extended: true }));
+
 // Connect to MongoDB
 console.log('🔗 Connecting to MongoDB...');
 connectDB();
@@ -35,12 +39,15 @@ app.get('/health', (req, res) => {
 });
 
 // Sensor routes (existing)
-app.use('/api/sensors', require('./routes/sensors'));
+app.use('/api/sensors', require('./routes/sensor'));
 
 // Memory/Context routes
 app.use('/api/memory', require('./routes/memory'));
 
-// Chat/AI routes (NEW - Phase 4)
+// 🎤 VOICE ROUTES (NEW - Phase 5) ← ADD THIS
+app.use('/api/voice', require('./routes/voice'));
+
+// Chat/AI routes (Phase 4)
 app.use('/api/chat', require('./routes/chat'));
 
 // Control routes (existing)
@@ -123,13 +130,21 @@ function broadcastAlert(message) {
   });
 }
 
-// Export broadcast functions for use in other routes
+function broadcastVoiceNotification(data) {
+  connectedClients.forEach(client => {
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(JSON.stringify({
+        type: 'voice',
+        data
+      }));
+    }
+  });
+}
+
 app.locals.broadcastSensorData = broadcastSensorData;
 app.locals.broadcastAlert = broadcastAlert;
+app.locals.broadcastVoiceNotification = broadcastVoiceNotification;
 
-// ==================== ERROR HANDLING ====================
-
-// 404 handler
 app.use((req, res) => {
   res.status(404).json({
     success: false,
@@ -141,6 +156,15 @@ app.use((req, res) => {
 // Global error handler
 app.use((err, req, res, next) => {
   console.error('❌ Error:', err);
+  
+  // Handle multer file upload errors
+  if (err.name === 'MulterError') {
+    return res.status(400).json({
+      success: false,
+      error: `File upload error: ${err.message}`
+    });
+  }
+
   res.status(500).json({
     success: false,
     error: 'Internal server error',
@@ -148,21 +172,24 @@ app.use((err, req, res, next) => {
   });
 });
 
-// ==================== START SERVER ====================
-
 const PORT = process.env.PORT || 5000;
 const HOST = process.env.HOST || 'localhost';
 
 server.listen(PORT, HOST, () => {
-  console.log('\n' + '='.repeat(60));
+  console.log('\n' + '='.repeat(70));
   console.log('🌱 AgriSmart AI Backend Server');
-  console.log('='.repeat(60));
+  console.log('='.repeat(70));
   console.log(`✅ Server running on http://${HOST}:${PORT}`);
   console.log(`📊 WebSocket available at ws://${HOST}:${PORT}`);
-  console.log(`🤖 AI Chat: POST /api/chat`);
-  console.log(`💾 Memory: GET /api/memory/*`);
-  console.log(`📡 Sensors: GET /api/sensors/*`);
-  console.log('='.repeat(60) + '\n');
+  console.log('\n📡 Available Endpoints:');
+  console.log(`   🎤 Voice:  POST /api/voice/chat (Multilingual voice assistant)`);
+  console.log(`   🤖 Chat:   POST /api/chat (Text queries)`);
+  console.log(`   💾 Memory: GET  /api/memory/* (Context & history)`);
+  console.log(`   📡 Sensors: GET /api/sensors/* (Current readings)`);
+  console.log(`   🎮 Control: POST /api/control (Device control)`);
+  console.log('\n🌍 Languages Supported: 40+ (Hindi, Tamil, Telugu, English, etc.)`');
+  console.log(`🔊 Voices: 6 options (Nova, Shimmer, Echo, Alloy, Fable, Onyx)\``);
+  console.log('='.repeat(70) + '\n');
 });
 
 // Graceful shutdown
@@ -188,4 +215,4 @@ process.on('SIGINT', () => {
   }, 10000);
 });
 
-module.exports = { app, server, wss, broadcastSensorData, broadcastAlert };
+module.exports = { app, server, wss, broadcastSensorData, broadcastAlert, broadcastVoiceNotification };
