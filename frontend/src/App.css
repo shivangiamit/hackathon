@@ -163,6 +163,10 @@ body {
 .card.blue svg { color: #2196f3; }
 .card.orange svg { color: #ff9800; }
 .card.purple svg { color: #9c27b0; }
+.card.green svg { color: #4caf50; }
+.card.teal svg { color: #009688; }
+.card.indigo svg { color: #3f51b5; }
+.card.pink svg { color: #e91e63; }
 
 .card-content {
   flex: 1;
@@ -566,6 +570,31 @@ button:disabled {
   background: #e0e0e0;
 }
 
+/* Clear Button */
+.clear-btn {
+  margin-top: 1rem;
+  padding: 0.75rem 1.5rem;
+  background-color: #3b82f6;
+  color: white;
+  border: none;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 1rem;
+  transition: background-color 0.2s;
+  display: block;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.clear-btn:hover {
+  background-color: #2563eb;
+}
+
+.clear-btn:active {
+  transform: scale(0.98);
+}
+
 /* Responsive */
 @media (max-width: 768px) {
   .app {
@@ -592,26 +621,4 @@ button:disabled {
   .logo h1 {
     font-size: 22px;
   }
-}
-/* Add this to your existing App.css file */
-
-.clear-btn {
-  margin-top: 1rem;
-  padding: 0.75rem 1.5rem;
-  background-color: #3b82f6;
-  color: white;
-  border: none;
-  border-radius: 0.5rem;
-  cursor: pointer;
-  font-weight: 600;
-  font-size: 1rem;
-  transition: background-color 0.2s;
-}
-
-.clear-btn:hover {
-  background-color: #2563eb;
-}
-
-.clear-btn:active {
-  transform: scale(0.98);
 }
