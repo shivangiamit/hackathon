@@ -95,7 +95,7 @@ class AIService {
    * Build the LangGraph with nodes and edges
    */
   _buildGraph() {
-    // Add nodes
+    // Add nodes first
     this.graph.addNode('node1_contextBuilder', this.node1_contextBuilder.bind(this));
     this.graph.addNode('node2_queryClassifier', this.node2_queryClassifier.bind(this));
     this.graph.addNode('node3_responseGenerator', this.node3_responseGenerator.bind(this));
@@ -104,8 +104,8 @@ class AIService {
     this.graph.addNode('node5_responseFormatter', this.node5_responseFormatter.bind(this));
     this.graph.addNode('node6_storageAndLearning', this.node6_storageAndLearning.bind(this));
 
-    // Add edges
-    this.graph.addEdge('START', 'node1_contextBuilder');
+    // Add edges using START and END constants
+    this.graph.addEdge(START, 'node1_contextBuilder');
     this.graph.addEdge('node1_contextBuilder', 'node2_queryClassifier');
     this.graph.addEdge('node2_queryClassifier', 'node3_responseGenerator');
     this.graph.addEdge('node3_responseGenerator', 'node4_judgeEvaluator');
@@ -143,7 +143,7 @@ class AIService {
     );
 
     this.graph.addEdge('node5_responseFormatter', 'node6_storageAndLearning');
-    this.graph.addEdge('node6_storageAndLearning', 'END');
+    this.graph.addEdge('node6_storageAndLearning', END);
 
     // Compile graph
     this.compiledGraph = this.graph.compile();
