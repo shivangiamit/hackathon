@@ -4,6 +4,7 @@ const FarmProfile = require('../models/FarmProfile');
 
 /**
  * Memory Service - Fetches historical context for AI
+ * SIMPLIFIED: Fetches ALL context, LLM handles filtering
  */
 class MemoryService {
   
@@ -136,7 +137,9 @@ class MemoryService {
         stats: profile.stats,
         topIssues: profile.patterns.common_issues.slice(0, 3),
         responseRate: profile.patterns.response_rate,
-        preferredMethods: profile.patterns.preferred_methods
+        preferredMethods: profile.patterns.preferred_methods,
+        successfulActions: profile.successful_actions.slice(0, 5),
+        failedActions: profile.failed_actions.slice(0, 3)
       };
     } catch (error) {
       console.error('Error fetching farmer profile:', error);
@@ -280,109 +283,31 @@ class MemoryService {
   }
 
   /**
-   * BUILD ENRICHED CONTEXT - Main function that combines everything
-   * NOW WITH SMART FILTERING based on query type
+   * BUILD ENRICHED CONTEXT - SIMPLIFIED VERSION
+   * Fetches ALL context, LLM will handle filtering what's relevant
    */
   async buildEnrichedContext(userId, query, currentSensors, queryType = 'general') {
     try {
       console.log(`🧠 Building enriched context for: ${queryType}`);
       
-      // Define what context is needed for each query type
-      const contextNeeds = {
-        watering: {
-          trends: ['moisture', 'temperature', 'humidity'],
-          trendDays: 7,
-          conversations: 3,
-          includeIrrigation: true,
-          includeProfile: false,
-          includeAnomalies: true
-        },
-        disease: {
-          trends: ['temperature', 'humidity'],
-          trendDays: 7,
-          conversations: 2,
-          includeIrrigation: false,
-          includeProfile: false,
-          includeAnomalies: true
-        },
-        fertilizer: {
-          trends: ['nitrogen', 'phosphorus', 'potassium', 'ph'],
-          trendDays: 14,
-          conversations: 3,
-          includeIrrigation: false,
-          includeProfile: true,
-          includeAnomalies: true
-        },
-        ph: {
-          trends: ['ph', 'nitrogen'],
-          trendDays: 14,
-          conversations: 2,
-          includeIrrigation: false,
-          includeProfile: false,
-          includeAnomalies: true
-        },
-        nutrients: {
-          trends: ['nitrogen', 'phosphorus', 'potassium'],
-          trendDays: 14,
-          conversations: 3,
-          includeIrrigation: false,
-          includeProfile: true,
-          includeAnomalies: true
-        },
-        general: {
-          trends: ['moisture', 'ph'],
-          trendDays: 7,
-          conversations: 2,
-          includeIrrigation: false,
-          includeProfile: true,
-          includeAnomalies: false
-        }
-      };
-      
-      const needs = contextNeeds[queryType] || contextNeeds.general;
-      
-      // Fetch only what's needed
-      const contextPromises = [];
-      
-      // Always get short-term trends
-      contextPromises.push(this.getRecentTrends(userId, needs.trendDays));
-      
-      // Always get recent conversations
-      contextPromises.push(this.getRecentConversations(userId, needs.trendDays, needs.conversations));
-      
-      // Conditional fetches
-      if (needs.includeProfile) {
-        contextPromises.push(this.getFarmerProfile(userId));
-      } else {
-        contextPromises.push(Promise.resolve(null));
-      }
-      
-      if (needs.includeIrrigation) {
-        contextPromises.push(this.getIrrigationHistory(userId, 3)); // Last 3 days only
-      } else {
-        contextPromises.push(Promise.resolve(null));
-      }
-      
-      if (needs.includeAnomalies) {
-        contextPromises.push(this.detectAnomalies(userId, currentSensors));
-      } else {
-        contextPromises.push(Promise.resolve([]));
-      }
-      
-      // Get similar queries (always useful)
-      contextPromises.push(this.getSimilarQueries(userId, queryType, 2)); // Just 2
-      
+      // Fetch everything in parallel
       const [
         trends,
         recentConversations,
         farmerProfile,
         irrigationHistory,
         anomalies,
-        similarQueries
-      ] = await Promise.all(contextPromises);
-      
-      // Filter trends to only include relevant parameters
-      const filteredTrends = trends ? this._filterTrends(trends, needs.trends) : null;
+        similarQueries,
+        dailySummaries
+      ] = await Promise.all([
+        this.getRecentTrends(userId, 30),              // 30 days trends
+        this.getRecentConversations(userId, 7, 10),    // Last 7 days, up to 10 conversations
+        this.getFarmerProfile(userId),                 // Full profile
+        this.getIrrigationHistory(userId, 7),          // Last 7 days irrigation
+        this.detectAnomalies(userId, currentSensors),  // Current anomalies
+        this.getSimilarQueries(userId, queryType, 5),  // Similar past queries
+        this.getDailySummaries(userId, 30)             // Last 30 days summaries
+      ]);
       
       const enrichedContext = {
         // User query
@@ -390,31 +315,28 @@ class MemoryService {
         queryType,
         timestamp: new Date(),
         
-        // Current state (always included)
+        // Current state
         currentSensors,
         
-        // Filtered historical trends (only relevant parameters)
-        trends: filteredTrends,
-        
-        // Limited past conversations
-        pastConversations: recentConversations.slice(0, needs.conversations),
+        // Full historical data (let LLM filter)
+        trends,
+        pastConversations: recentConversations,
         similarQueries,
-        
-        // Conditional context
-        farmerProfile: needs.includeProfile ? farmerProfile : null,
-        irrigationHistory: needs.includeIrrigation ? irrigationHistory : null,
-        anomalies: needs.includeAnomalies ? anomalies : [],
+        farmerProfile,
+        irrigationHistory,
+        anomalies,
+        dailySummaries,
         
         // Metadata
         contextStats: {
           conversationsFound: recentConversations.length,
-          trendsIncluded: needs.trends,
-          contextType: queryType,
-          estimatedTokens: this._estimateTokens(recentConversations, filteredTrends, needs)
+          similarQueriesFound: similarQueries.length,
+          anomaliesDetected: anomalies.length,
+          estimatedTokens: this._estimateTokens(recentConversations, trends, dailySummaries)
         }
       };
       
-      console.log(`✅ Smart context built: ~${enrichedContext.contextStats.estimatedTokens} tokens`);
+      console.log(`✅ Full context built: ~${enrichedContext.contextStats.estimatedTokens} tokens`);
       
       return enrichedContext;
       
@@ -434,48 +356,33 @@ class MemoryService {
   }
   
   /**
-   * Filter trends to only include relevant parameters
-   * @private
-   */
-  _filterTrends(trends, relevantParams) {
-    if (!trends) return null;
-    
-    const filtered = {};
-    relevantParams.forEach(param => {
-      if (trends[param]) {
-        filtered[param] = trends[param];
-      }
-    });
-    
-    return filtered;
-  }
-  
-  /**
    * Estimate token count for context
    * @private
    */
-  _estimateTokens(conversations, trends, needs) {
+  _estimateTokens(conversations, trends, summaries) {
     let tokens = 100; // Base: query + sensors
     
     tokens += conversations.length * 100; // ~100 tokens per conversation
-    
-    if (trends) {
-      tokens += needs.trends.length * 30; // ~30 tokens per trend
-    }
-    
-    if (needs.includeProfile) tokens += 100;
-    if (needs.includeIrrigation) tokens += 80;
-    if (needs.includeAnomalies) tokens += 50;
+    tokens += summaries.length * 50;      // ~50 tokens per daily summary
+    tokens += trends ? 150 : 0;            // Trends
     
     return tokens;
   }
 
   /**
    * Format context for AI prompt (human-readable)
-   * NOW: Only includes relevant information based on what's present
    */
   formatContextForAI(enrichedContext) {
-    const { currentSensors, trends, pastConversations, farmerProfile, irrigationHistory, anomalies, queryType } = enrichedContext;
+    const { 
+      currentSensors, 
+      trends, 
+      pastConversations, 
+      farmerProfile, 
+      irrigationHistory, 
+      anomalies, 
+      queryType,
+      dailySummaries 
+    } = enrichedContext;
     
     let contextText = `
 === QUERY TYPE: ${queryType.toUpperCase()} ===
@@ -493,51 +400,64 @@ Motor Status: ${currentSensors.motorStatus ? 'ON (irrigating)' : 'OFF'}
 ${currentSensors.manualMode ? '⚠️  MANUAL MODE: Auto-irrigation disabled by farmer' : '✓ AUTO MODE: ESP32 managing irrigation'}
 `;
 
-    // Add trends ONLY if available and relevant
+    // Add trends if available
     if (trends && Object.keys(trends).length > 0) {
-      contextText += `\n=== RECENT TRENDS ===\n`;
+      contextText += `\n=== RECENT TRENDS (30 days) ===\n`;
       
       for (const [param, data] of Object.entries(trends)) {
         if (data && data.direction) {
           const arrow = data.direction === 'increasing' ? '↗️' : data.direction === 'decreasing' ? '↘️' : '→';
-          contextText += `${param.toUpperCase()}: ${arrow} ${data.direction} (${data.change > 0 ? '+' : ''}${data.change} over period)\n`;
+          contextText += `${param.toUpperCase()}: ${arrow} ${data.direction} (Change: ${data.change > 0 ? '+' : ''}${data.change})\n`;
         }
       }
     }
 
-    // Add anomalies ONLY if detected
+    // Add anomalies if detected
     if (anomalies && anomalies.length > 0) {
-      contextText += `\n=== ⚠️  DETECTED ISSUES ===\n`;
-      anomalies.slice(0, 3).forEach(a => {  // Max 3 anomalies
-        contextText += `${a.severity === 'high' ? '🔴' : '🟡'} ${a.message}\n`;
+      contextText += `\n=== DETECTED ANOMALIES ===\n`;
+      anomalies.forEach(a => {
+        contextText += `${a.severity === 'high' ? '🔴' : '🟡'} [${a.type}] ${a.message}\n`;
       });
     }
 
-    // Add past conversations ONLY if relevant
+    // Add past conversations
     if (pastConversations && pastConversations.length > 0) {
-      contextText += `\n=== RECENT HISTORY ===\n`;
-      pastConversations.slice(0, 2).forEach(c => {  // Max 2 conversations
+      contextText += `\n=== RECENT CONVERSATION HISTORY ===\n`;
+      pastConversations.slice(0, 5).forEach(c => {
         const outcome = c.wasSuccessful === true ? '✅' : c.wasSuccessful === false ? '❌' : '⏳';
-        contextText += `${c.daysAgo}d ago: "${c.query}" ${outcome}\n`;
+        contextText += `${c.daysAgo}d ago [${c.queryType}]: "${c.query}" ${outcome}\n`;
       });
     }
 
-    // Add irrigation history ONLY if included
+    // Add irrigation history
     if (irrigationHistory) {
-      contextText += `\n=== IRRIGATION PATTERN ===\n`;
-      contextText += `Recent: ${irrigationHistory.totalEvents} events, ${irrigationHistory.totalMinutes} min total\n`;
-      if (irrigationHistory.pattern) {
-        contextText += `${irrigationHistory.pattern}\n`;
+      contextText += `\n=== IRRIGATION PATTERNS ===\n`;
+      contextText += `Recent Activity: ${irrigationHistory.totalEvents} events, ${irrigationHistory.totalMinutes} min total\n`;
+      if (irrigationHistory.commonTimes.length > 0) {
+        contextText += `Common Times: ${irrigationHistory.commonTimes.join(', ')}\n`;
       }
     }
 
-    // Add farmer profile ONLY if included
-    if (farmerProfile && farmerProfile.preferredMethods && farmerProfile.preferredMethods.length > 0) {
-      contextText += `\n=== FARMER PREFERENCES ===\n`;
-      contextText += `Methods: ${farmerProfile.preferredMethods.join(', ')}\n`;
+    // Add farmer profile insights
+    if (farmerProfile) {
+      contextText += `\n=== FARMER PROFILE ===\n`;
+      contextText += `Current Crop: ${farmerProfile.currentCrop.name}\n`;
       if (farmerProfile.topIssues && farmerProfile.topIssues.length > 0) {
-        contextText += `Common Issues: ${farmerProfile.topIssues.join(', ')}\n`;
+        contextText += `Recurring Issues: ${farmerProfile.topIssues.join(', ')}\n`;
       }
+      if (farmerProfile.preferredMethods && farmerProfile.preferredMethods.length > 0) {
+        contextText += `Preferred Methods: ${farmerProfile.preferredMethods.join(', ')}\n`;
+      }
+      contextText += `Response Rate: ${(farmerProfile.responseRate * 100).toFixed(0)}%\n`;
+    }
+
+    // Add daily summary insights (last few days)
+    if (dailySummaries && dailySummaries.length > 0) {
+      contextText += `\n=== LAST 3 DAYS SUMMARY ===\n`;
+      dailySummaries.slice(0, 3).forEach(s => {
+        const date = new Date(s.date).toLocaleDateString();
+        contextText += `${date}: Moisture ${s.moisture.avg.toFixed(1)}%, Irrigation ${s.irrigation.totalEvents} events\n`;
+      });
     }
 
     return contextText.trim();
