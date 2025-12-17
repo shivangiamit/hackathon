@@ -1,6 +1,6 @@
 const { ChatGoogleGenerativeAI } = require('@langchain/google-genai');
 const { ChatOpenAI } = require('@langchain/openai');
-const { StateGraph } = require('@langchain/langgraph');
+const { StateGraph, Annotation, START, END } = require('@langchain/langgraph');
 const { PromptTemplate, ChatPromptTemplate } = require('@langchain/core/prompts');
 const { RunnableSequence } = require('@langchain/core/runnables');
 const memoryService = require('./memoryService');
@@ -10,24 +10,66 @@ const { getJudgePrompt, getRetryPrompt: getJudgeRetryPrompt } = require('../prom
 const Conversation = require('../models/Conversation');
 
 /**
- * State Schema for LangGraph
+ * State Annotation for LangGraph
  */
-const StateSchema = {
-  query: { type: 'string' },
-  userId: { type: 'string' },
-  currentSensors: { type: 'object' },
-  queryType: { type: 'string' },
-  enrichedContext: { type: 'object' },
-  timestamp: { type: 'number' },
-  classification: { type: 'object' },
-  aiResponse: { type: 'string' },
-  judgement: { type: 'object' },
-  retryCount: { type: 'number' },
-  formattedResponse: { type: 'object' },
-  conversationId: { type: 'string' },
-  stage: { type: 'string' },
-  error: { type: 'string' }
-};
+const StateAnnotation = Annotation.Root({
+  query: Annotation({
+    value: String,
+    default: () => ''
+  }),
+  userId: Annotation({
+    value: String,
+    default: () => 'farmer_001'
+  }),
+  currentSensors: Annotation({
+    value: Object,
+    default: () => ({})
+  }),
+  queryType: Annotation({
+    value: String,
+    default: () => 'general'
+  }),
+  enrichedContext: Annotation({
+    value: Object,
+    default: () => null
+  }),
+  timestamp: Annotation({
+    value: Number,
+    default: () => Date.now()
+  }),
+  classification: Annotation({
+    value: Object,
+    default: () => null
+  }),
+  aiResponse: Annotation({
+    value: String,
+    default: () => ''
+  }),
+  judgement: Annotation({
+    value: Object,
+    default: () => null
+  }),
+  retryCount: Annotation({
+    value: Number,
+    default: () => 0
+  }),
+  formattedResponse: Annotation({
+    value: Object,
+    default: () => null
+  }),
+  conversationId: Annotation({
+    value: String,
+    default: () => ''
+  }),
+  stage: Annotation({
+    value: String,
+    default: () => 'start'
+  }),
+  error: Annotation({
+    value: String,
+    default: () => ''
+  })
+});
 
 class AIService {
   constructor() {
@@ -44,8 +86,8 @@ class AIService {
       maxTokens: 1000
     });
 
-    // Initialize StateGraph
-    this.graph = new StateGraph(StateSchema);
+    // Initialize StateGraph with Annotation
+    this.graph = new StateGraph(StateAnnotation);
     this._buildGraph();
   }
 
@@ -103,10 +145,8 @@ class AIService {
     this.graph.addEdge('node5_responseFormatter', 'node6_storageAndLearning');
     this.graph.addEdge('node6_storageAndLearning', 'END');
 
-    // Compile graph with checkpointing
-    this.compiledGraph = this.graph.compile({
-      checkpointer: null // Can add checkpointer for persistence if needed
-    });
+    // Compile graph
+    this.compiledGraph = this.graph.compile();
   }
 
   /**
@@ -372,7 +412,6 @@ This is a complex query requiring detailed analysis. Show your reasoning step-by
 
     console.log(`🔄 NODE 4.1: Enhanced Retry (Attempt ${retryCount + 1})...`);
 
-    // Only retry once
     if (retryCount >= 1) {
       console.log('⚠️  Max retries reached, proceeding with current response');
       return {
@@ -458,7 +497,6 @@ ${retryPrompt}`;
     const insights = {};
     const { trends, pastConversations } = enrichedContext;
 
-    // Trend insights
     if (trends) {
       for (const [param, data] of Object.entries(trends)) {
         if (data && data.direction && response.toLowerCase().includes(param)) {
@@ -467,7 +505,6 @@ ${retryPrompt}`;
       }
     }
 
-    // Historical comparison
     if (pastConversations && pastConversations.length > 0) {
       const lastSuccess = pastConversations.find(c => c.wasSuccessful);
       if (lastSuccess) {
@@ -485,8 +522,8 @@ ${retryPrompt}`;
     const actions = [];
 
     const actionPatterns = [
-      /\d+\.\s+([^.\n]+)/g, // Numbered lists
-      /[-•]\s+([^.\n]+)/g // Bullet points
+      /\d+\.\s+([^.\n]+)/g,
+      /[-•]\s+([^.\n]+)/g
     ];
 
     for (const pattern of actionPatterns) {
@@ -528,7 +565,6 @@ ${retryPrompt}`;
     const alerts = [];
     const { anomalies } = enrichedContext;
 
-    // High-priority anomalies
     if (anomalies && anomalies.length > 0) {
       anomalies
         .filter(a => a.severity === 'high')
@@ -537,7 +573,6 @@ ${retryPrompt}`;
         });
     }
 
-    // Critical keywords
     const criticalKeywords = ['critical', 'dangerous', 'must', 'immediately', 'urgent'];
     const responseLower = response.toLowerCase();
 
@@ -616,7 +651,6 @@ ${retryPrompt}`;
 
   /**
    * ==================== MAIN ORCHESTRATOR ====================
-   * Execute the compiled graph
    */
   async processQuery(userId, query, currentSensors) {
     console.log('\n' + '='.repeat(60));
@@ -643,7 +677,6 @@ ${retryPrompt}`;
         error: null
       };
 
-      // Execute graph
       const finalState = await this.compiledGraph.invoke(initialState);
 
       const processingTime = Date.now() - startTime;
