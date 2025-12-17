@@ -8,6 +8,9 @@ import { useWebSocket } from "./hooks/useWebSocket";
 import { api } from "./services/api";
 import "./App.css";
 
+// Ensure this matches your backend URL
+const API_URL = "http://localhost:5000/api";
+
 function App() {
   const [activeTab, setActiveTab] = useState("dashboard");
   const [sensorData, setSensorData] = useState({
@@ -42,29 +45,17 @@ function App() {
 
   // WebSocket callbacks
   const handleSensorUpdate = useCallback((data) => {
-    console.log("🔄 Updating sensor data:", data);
     setSensorData((prev) => ({
       ...prev,
-      temperature: data.temperature ?? prev.temperature,
-      humidity: data.humidity ?? prev.humidity,
-      moisture: data.moisture ?? prev.moisture,
-      ph: data.ph ?? prev.ph,
-      nitrogen: data.nitrogen ?? prev.nitrogen,
-      phosphorus: data.phosphorus ?? prev.phosphorus,
-      potassium: data.potassium ?? prev.potassium,
-      motorStatus: data.motorStatus ?? prev.motorStatus,
-      crop: data.crop ?? prev.crop,
-      manualMode: data.manualMode ?? prev.manualMode,
+      ...data,
     }));
   }, []);
 
   const handleMotorUpdate = useCallback((status) => {
-    console.log("⚡ Motor status:", status);
     setSensorData((prev) => ({ ...prev, motorStatus: status }));
   }, []);
 
   const handleAlert = useCallback((message) => {
-    console.log("⚠️ Alert:", message);
     alert(message);
   }, []);
 
@@ -74,42 +65,33 @@ function App() {
     handleAlert
   );
 
-  // Fetch history data
+  // Fetch history data and format it specifically for Recharts
   useEffect(() => {
     const fetchHistory = async () => {
       try {
-        console.log("📈 Fetching sensor history...");
         const res = await fetch(`${API_URL}/sensor/recent?hours=24`);
         if (!res.ok) throw new Error("Failed to fetch history");
 
         const result = await res.json();
-        console.log("📊 API Response:", result);
 
-        // Format data for chart
-        if (result.success && result.data && Array.isArray(result.data)) {
-          const formattedData = result.data.map((item, index) => ({
+        if (result.success && Array.isArray(result.data)) {
+          const formattedData = result.data.map((item) => ({
             timestamp: new Date(item.timestamp).toLocaleTimeString("en-US", {
               hour: "2-digit",
               minute: "2-digit",
             }),
-            moisture: item.moisture,
-            temperature: item.temperature,
-            humidity: item.humidity,
-            ph: item.ph,
-            nitrogen: item.nitrogen,
-            phosphorus: item.phosphorus,
-            potassium: item.potassium,
+            moisture: Number(item.moisture) || 0,
+            temperature: Number(item.temperature) || 0,
+            humidity: Number(item.humidity) || 0,
+            ph: Number(item.ph) || 0,
+            nitrogen: Number(item.nitrogen) || 0,
+            phosphorus: Number(item.phosphorus) || 0,
+            potassium: Number(item.potassium) || 0,
           }));
-
-          console.log(`✅ Fetched ${formattedData.length} historical readings`);
           setHistory(formattedData);
-        } else {
-          console.warn("⚠️ No data in response");
-          setHistory([]);
         }
       } catch (error) {
         console.error("Error fetching history:", error);
-        setHistory([]);
       }
     };
 
@@ -124,16 +106,15 @@ function App() {
       await api.changeCrop(selectedCrop);
       setSensorData((prev) => ({ ...prev, crop: selectedCrop }));
     } catch (error) {
-      console.error("Error changing crop:", error);
+      console.error(error);
     }
   };
 
   const handleToggleMotor = async () => {
     try {
-      const newStatus = !sensorData.motorStatus;
-      await api.toggleMotor(newStatus);
+      await api.toggleMotor(!sensorData.motorStatus);
     } catch (error) {
-      console.error("Error controlling motor:", error);
+      console.error(error);
     }
   };
 
@@ -143,17 +124,15 @@ function App() {
       await api.toggleManualMode(newMode);
       setManualMode(newMode);
     } catch (error) {
-      console.error("Error toggling manual mode:", error);
+      console.error(error);
     }
   };
 
   // Chat handlers
   const handleSendMessage = async () => {
     if (!userInput.trim()) return;
-
     setChatMessages((prev) => [...prev, { type: "user", text: userInput }]);
     setIsAiTyping(true);
-
     try {
       const data = await api.sendChatMessage(userInput);
       setChatMessages((prev) => [...prev, { type: "ai", text: data.response }]);
@@ -163,33 +142,11 @@ function App() {
         { type: "ai", text: "Error connecting to AI." },
       ]);
     }
-
     setIsAiTyping(false);
     setUserInput("");
   };
 
-  // Disease detection handlers
-  const analyzePlantImage = async (base64Image) => {
-    setIsAnalyzing(true);
-
-    try {
-      const data = await api.analyzePlantImage(base64Image);
-      setDiseaseResult(data);
-    } catch (error) {
-      setDiseaseResult({
-        name: "Error",
-        confidence: 0,
-        severity: "Unknown",
-        description: "Failed to analyze image",
-        causes: [],
-        treatment: [],
-        prevention: "",
-      });
-    }
-
-    setIsAnalyzing(false);
-  };
-
+  // Image handlers
   const handleImageUpload = (e) => {
     const file = e.target.files[0];
     if (file) {
@@ -197,42 +154,37 @@ function App() {
       reader.onloadend = () => {
         setDiseaseImage(reader.result);
         setDiseaseResult(null);
-        analyzePlantImage(reader.result);
+        setIsAnalyzing(true);
+        api
+          .analyzePlantImage(reader.result)
+          .then(setDiseaseResult)
+          .finally(() => setIsAnalyzing(false));
       };
       reader.readAsDataURL(file);
     }
   };
 
-  const handleClearImage = () => {
-    setDiseaseImage(null);
-    setDiseaseResult(null);
-  };
-
   return (
     <div className="app">
       <Header wsConnected={wsConnected} uptime={sensorData.uptime} />
-
       <nav className="tabs">
         <button
           className={activeTab === "dashboard" ? "active" : ""}
           onClick={() => setActiveTab("dashboard")}
         >
-          <TrendingUp size={20} />
-          Dashboard
+          <TrendingUp size={20} /> Dashboard
         </button>
         <button
           className={activeTab === "health" ? "active" : ""}
           onClick={() => setActiveTab("health")}
         >
-          <Camera size={20} />
-          Crop Health
+          <Camera size={20} /> Crop Health
         </button>
         <button
           className={activeTab === "chat" ? "active" : ""}
           onClick={() => setActiveTab("chat")}
         >
-          <MessageSquare size={20} />
-          AI Assistant
+          <MessageSquare size={20} /> AI Assistant
         </button>
       </nav>
 
@@ -240,7 +192,7 @@ function App() {
         {activeTab === "dashboard" && (
           <Dashboard
             sensorData={sensorData}
-            history={Array.isArray(history) ? history : []}
+            history={history}
             selectedCrop={selectedCrop}
             setSelectedCrop={setSelectedCrop}
             onChangeCrop={handleChangeCrop}
@@ -249,24 +201,24 @@ function App() {
             onToggleMotor={handleToggleMotor}
           />
         )}
-
         {activeTab === "health" && (
           <CropHealth
             diseaseImage={diseaseImage}
             diseaseResult={diseaseResult}
             isAnalyzing={isAnalyzing}
             onImageUpload={handleImageUpload}
-            onClearImage={handleClearImage}
+            onClearImage={() => {
+              setDiseaseImage(null);
+              setDiseaseResult(null);
+            }}
           />
         )}
-
         {activeTab === "chat" && (
           <Chat
             messages={chatMessages}
             userInput={userInput}
             setUserInput={setUserInput}
             isAiTyping={isAiTyping}
-            setIsAiTyping={setIsAiTyping}
             onSendMessage={handleSendMessage}
           />
         )}
